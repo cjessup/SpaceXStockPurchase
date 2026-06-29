@@ -49,7 +49,7 @@ async function fetchChart(symbol) {
   };
 }
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'docs')));
 
 app.get('/api/quotes', async (_req, res) => {
   try {
