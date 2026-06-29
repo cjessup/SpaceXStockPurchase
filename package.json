@@ -1,0 +1,13 @@
+{
+  "name": "spacex-stock-purchase-analysis",
+  "version": "1.0.0",
+  "description": "SpaceX stock purchase analysis - Tesla vs SpaceX price comparison",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
