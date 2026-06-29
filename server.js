@@ -49,7 +49,18 @@ async function fetchChart(symbol) {
   };
 }
 
-app.use(express.static(path.join(__dirname, 'docs')));
+const staticDir = path.join(__dirname, 'docs');
+
+app.use(express.static(staticDir, { index: 'index.html' }));
+
+app.get('/', (_req, res) => {
+  res.sendFile(path.join(staticDir, 'index.html'));
+});
+
+// Chrome DevTools probes this path automatically; return empty JSON to avoid 404/CSP console noise.
+app.get('/.well-known/appspecific/com.chrome.devtools.json', (_req, res) => {
+  res.json({});
+});
 
 app.get('/api/quotes', async (_req, res) => {
   try {

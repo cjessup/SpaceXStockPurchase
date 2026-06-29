@@ -6,7 +6,6 @@
   <title>SpaceX stock purchase analysis</title>
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
   <div class="app">
@@ -38,11 +37,17 @@
           <div class="holding-field">
             <label for="teslaShares">Tesla shares owned</label>
             <input type="number" id="teslaShares" min="0" step="0.0001" value="0" inputmode="decimal">
+            <span class="holding-value tesla-value" id="teslaHoldingsValue">Value: —</span>
           </div>
           <div class="holding-field">
             <label for="spacexShares">SpaceX shares owned</label>
             <input type="number" id="spacexShares" min="0" step="0.0001" value="0" inputmode="decimal">
+            <span class="holding-value spacex-value" id="spacexHoldingsValue">Value: —</span>
           </div>
+        </div>
+        <div class="portfolio-total" id="portfolioTotal">
+          <span class="portfolio-total-label">Total portfolio value</span>
+          <span class="portfolio-total-value" id="totalHoldingsValue">—</span>
         </div>
       </section>
 
@@ -87,13 +92,39 @@
 
         <button type="button" id="calculateBtn" class="btn btn-primary">Calculate Tesla shares to sell</button>
 
-        <div class="results" id="results" hidden>
+        <div class="results" id="buyResults" hidden>
           <div class="result-card">
             <span class="result-label">Tesla shares to sell</span>
             <span class="result-value" id="teslaToSell">—</span>
           </div>
-          <div class="result-details" id="resultDetails"></div>
+          <div class="result-details" id="buyResultDetails"></div>
         </div>
+      </section>
+
+      <section class="panel calculator-panel sell-panel">
+        <h2>Sell analysis</h2>
+        <p class="panel-desc">Enter how many Tesla shares you want to sell. The calculator will fetch the latest prices and determine how many SpaceX shares you could purchase with the proceeds at the current market price.</p>
+
+        <div class="calculator-row">
+          <label for="teslaToSellInput">Tesla shares to sell</label>
+          <input type="number" id="teslaToSellInput" min="0" step="0.0001" value="" placeholder="0.0000" inputmode="decimal">
+        </div>
+
+        <button type="button" id="calculateSellBtn" class="btn btn-primary">Calculate SpaceX shares to buy</button>
+
+        <div class="results" id="sellResults" hidden>
+          <div class="result-card">
+            <span class="result-label">SpaceX shares to buy</span>
+            <span class="result-value" id="spacexToBuyResult">—</span>
+          </div>
+          <div class="result-details" id="sellResultDetails"></div>
+        </div>
+      </section>
+
+      <section class="panel impact-panel" id="impactPanel" hidden>
+        <h2>Portfolio impact</h2>
+        <p class="panel-desc">Projected holdings after the swap at current prices. Total portfolio value remains unchanged — only the allocation between Tesla and SpaceX shifts.</p>
+        <div class="impact-grid" id="impactGrid"></div>
       </section>
     </main>
 
