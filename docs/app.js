@@ -1,5 +1,10 @@
 const $ = (id) => document.getElementById(id);
 
+const setDisabled = (id, disabled) => {
+  const el = $(id);
+  if (el) el.disabled = disabled;
+};
+
 const state = {
   tesla: null,
   spacex: null,
@@ -69,13 +74,8 @@ function buildChartConfig(color, fillColor, label) {
       },
       scales: {
         x: {
-          type: 'time',
-          time: {
-            unit: 'hour',
-            displayFormats: { hour: 'h:mm a' },
-          },
           grid: { color: 'rgba(255,255,255,0.06)' },
-          ticks: { color: '#8b9bb8', maxTicksLimit: 6 },
+          ticks: { color: '#8b9bb8', maxTicksLimit: 8 },
         },
         y: {
           grid: { color: 'rgba(255,255,255,0.06)' },
@@ -90,6 +90,10 @@ function buildChartConfig(color, fillColor, label) {
 }
 
 function initCharts() {
+  if (typeof Chart === 'undefined') {
+    throw new Error('Chart.js failed to load. Check your network connection and refresh.');
+  }
+
   state.charts.tesla = new Chart(
     $('teslaChart'),
     buildChartConfig('#e31937', 'rgba(227, 25, 55, 0.12)', 'Tesla')
@@ -100,11 +104,16 @@ function initCharts() {
   );
 }
 
+function formatChartTime(ms) {
+  return new Date(ms).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 function updateChart(chart, history) {
-  chart.data.datasets[0].data = history.map((p) => ({
-    x: p.time,
-    y: p.price,
-  }));
+  chart.data.labels = history.map((p) => formatChartTime(p.time));
+  chart.data.datasets[0].data = history.map((p) => p.price);
   chart.update('none');
 }
 
@@ -121,6 +130,106 @@ function updateQuoteCard(prefix, quote) {
   `;
 }
 
+function getOwnedShares() {
+  return {
+    tesla: parseFloat($('teslaShares').value) || 0,
+    spacex: parseFloat($('spacexShares').value) || 0,
+  };
+}
+
+function getPortfolioValues() {
+  const owned = getOwnedShares();
+  const teslaPrice = state.tesla?.price ?? 0;
+  const spacexPrice = state.spacex?.price ?? 0;
+
+  const teslaValue = owned.tesla * teslaPrice;
+  const spacexValue = owned.spacex * spacexPrice;
+
+  return {
+    owned,
+    teslaPrice,
+    spacexPrice,
+    teslaValue,
+    spacexValue,
+    totalValue: teslaValue + spacexValue,
+  };
+}
+
+function updateHoldingsSummary() {
+  if (!state.tesla || !state.spacex) {
+    $('teslaHoldingsValue').textContent = 'Value: —';
+    $('spacexHoldingsValue').textContent = 'Value: —';
+    $('totalHoldingsValue').textContent = '—';
+    return;
+  }
+
+  const portfolio = getPortfolioValues();
+
+  $('teslaHoldingsValue').textContent =
+    `Value: ${formatCurrency(portfolio.teslaValue)}`;
+  $('spacexHoldingsValue').textContent =
+    `Value: ${formatCurrency(portfolio.spacexValue)}`;
+  $('totalHoldingsValue').textContent = formatCurrency(portfolio.totalValue);
+}
+
+function renderPortfolioImpact({
+  teslaSharesAfter,
+  spacexSharesAfter,
+  scenarioLabel,
+  warning = '',
+}) {
+  const portfolio = getPortfolioValues();
+  const { teslaPrice, spacexPrice, owned, teslaValue, spacexValue, totalValue } =
+    portfolio;
+
+  const teslaValueAfter = teslaSharesAfter * teslaPrice;
+  const spacexValueAfter = spacexSharesAfter * spacexPrice;
+  const totalAfter = teslaValueAfter + spacexValueAfter;
+
+  $('impactGrid').innerHTML = `
+    <table class="impact-table">
+      <thead>
+        <tr>
+          <th>Position</th>
+          <th>Current shares</th>
+          <th>After swap</th>
+          <th>Current value</th>
+          <th>After swap value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="tesla-row">
+          <td>Tesla</td>
+          <td>${formatShares(owned.tesla)}</td>
+          <td>${formatShares(teslaSharesAfter)}</td>
+          <td>${formatCurrency(teslaValue)}</td>
+          <td>${formatCurrency(teslaValueAfter)}</td>
+        </tr>
+        <tr class="spacex-row">
+          <td>SpaceX</td>
+          <td>${formatShares(owned.spacex)}</td>
+          <td>${formatShares(spacexSharesAfter)}</td>
+          <td>${formatCurrency(spacexValue)}</td>
+          <td>${formatCurrency(spacexValueAfter)}</td>
+        </tr>
+        <tr class="total-row">
+          <td>Total portfolio</td>
+          <td>—</td>
+          <td>—</td>
+          <td>${formatCurrency(totalValue)}</td>
+          <td>${formatCurrency(totalAfter)}</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="impact-note">
+      ${scenarioLabel} · Prices as of ${formatTime(state.tesla.updatedAt)}.
+      Total value ${Math.abs(totalAfter - totalValue) < 0.01 ? 'unchanged' : 'may differ slightly due to rounding'}.
+      ${warning ? `<span class="impact-warning">${warning}</span>` : ''}
+    </p>
+  `;
+  $('impactPanel').hidden = false;
+}
+
 function renderQuotes(data) {
   state.tesla = data.tesla;
   state.spacex = data.spacex;
@@ -129,21 +238,15 @@ function renderQuotes(data) {
   updateQuoteCard('spacex', data.spacex);
   updateChart(state.charts.tesla, data.tesla.history);
   updateChart(state.charts.spacex, data.spacex.history);
+  updateHoldingsSummary();
 }
 
 const YAHOO_CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
-const useLocalApi =
-  location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const isLocalServer =
+  location.protocol !== 'file:' &&
+  (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
-async function fetchChart(symbol) {
-  const url = `${YAHOO_CHART_URL}/${symbol}?interval=5m&range=1d`;
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(`Yahoo Finance returned ${response.status} for ${symbol}`);
-  }
-
-  const data = await response.json();
+function parseChartResponse(symbol, data) {
   const result = data?.chart?.result?.[0];
 
   if (!result) {
@@ -174,14 +277,52 @@ async function fetchChart(symbol) {
   };
 }
 
-async function loadQuotes() {
-  if (useLocalApi) {
-    const response = await fetch('/api/quotes');
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err.error || `Request failed (${response.status})`);
+async function fetchChart(symbol) {
+  const yahooUrl = `${YAHOO_CHART_URL}/${symbol}?interval=5m&range=1d`;
+  const sources = [
+    yahooUrl,
+    `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
+  ];
+
+  let lastError = null;
+
+  for (const url of sources) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Yahoo Finance returned ${response.status} for ${symbol}`);
+      }
+
+      const data = await response.json();
+      if (data?.error) {
+        throw new Error(data.error);
+      }
+
+      return parseChartResponse(symbol, data);
+    } catch (error) {
+      lastError = error;
     }
-    return response.json();
+  }
+
+  if (location.protocol === 'file:') {
+    throw new Error(
+      'Cannot load prices from a local file. Run "npm start" and open http://localhost:3000'
+    );
+  }
+
+  throw lastError || new Error(`Failed to load prices for ${symbol}`);
+}
+
+async function loadQuotes() {
+  if (isLocalServer) {
+    try {
+      const response = await fetch('/api/quotes');
+      if (response.ok) {
+        return response.json();
+      }
+    } catch {
+      // Fall back to direct/proxy fetch below.
+    }
   }
 
   const [tesla, spacex] = await Promise.all([
@@ -197,8 +338,9 @@ async function fetchQuotes({ showLoading = true } = {}) {
   state.loading = true;
   if (showLoading) setStatus('Fetching latest prices…', 'idle');
 
-  $('refreshBtn').disabled = true;
-  $('calculateBtn').disabled = true;
+  setDisabled('refreshBtn', true);
+  setDisabled('calculateBtn', true);
+  setDisabled('calculateSellBtn', true);
 
   try {
     const data = await loadQuotes();
@@ -216,8 +358,9 @@ async function fetchQuotes({ showLoading = true } = {}) {
     return null;
   } finally {
     state.loading = false;
-    $('refreshBtn').disabled = false;
-    $('calculateBtn').disabled = false;
+    setDisabled('refreshBtn', false);
+    setDisabled('calculateBtn', false);
+    setDisabled('calculateSellBtn', false);
   }
 }
 
@@ -238,11 +381,11 @@ function restartAutoRefresh() {
   }, seconds * 1000);
 }
 
-function calculateSwap() {
+function calculateBuySwap() {
   const spacexToBuy = parseFloat($('spacexToBuy').value);
 
   if (!Number.isFinite(spacexToBuy) || spacexToBuy <= 0) {
-    $('results').hidden = true;
+    $('buyResults').hidden = true;
     alert('Enter a positive number of SpaceX shares to purchase.');
     return;
   }
@@ -252,57 +395,140 @@ function calculateSwap() {
     return;
   }
 
+  const { owned } = getPortfolioValues();
   const teslaPrice = state.tesla.price;
   const spacexPrice = state.spacex.price;
   const totalCost = spacexToBuy * spacexPrice;
   const teslaSharesToSell = totalCost / teslaPrice;
 
-  const teslaOwned = parseFloat($('teslaShares').value) || 0;
-  const spacexOwned = parseFloat($('spacexShares').value) || 0;
-  const remainingTesla = teslaOwned - teslaSharesToSell;
-  const newSpacexTotal = spacexOwned + spacexToBuy;
+  const teslaSharesAfter = owned.tesla - teslaSharesToSell;
+  const spacexSharesAfter = owned.spacex + spacexToBuy;
+  const insufficient = teslaSharesAfter < 0;
 
   $('teslaToSell').textContent = formatShares(teslaSharesToSell);
-  $('resultDetails').innerHTML = `
+  $('buyResultDetails').innerHTML = `
     <strong>At current prices</strong> (${formatTime(state.tesla.updatedAt)}):<br>
     ${formatShares(spacexToBuy)} SpaceX shares × ${formatCurrency(spacexPrice)} =
     <strong>${formatCurrency(totalCost)}</strong> total purchase cost.<br>
     ${formatCurrency(totalCost)} ÷ ${formatCurrency(teslaPrice)} per Tesla share =
-    <strong>${formatShares(teslaSharesToSell)} Tesla shares to sell</strong>.<br><br>
-    After swap: ${formatShares(newSpacexTotal)} SpaceX shares owned,
-    ${formatShares(remainingTesla)} Tesla shares remaining
-    ${remainingTesla < 0 ? '<span style="color:#f87171"> (insufficient Tesla holdings)</span>' : ''}.
+    <strong>${formatShares(teslaSharesToSell)} Tesla shares to sell</strong>.
   `;
-  $('results').hidden = false;
+  $('buyResults').hidden = false;
+  $('sellResults').hidden = true;
+
+  renderPortfolioImpact({
+    teslaSharesAfter,
+    spacexSharesAfter,
+    scenarioLabel: `Buying ${formatShares(spacexToBuy)} additional SpaceX shares`,
+    warning: insufficient ? 'Insufficient Tesla holdings for this purchase.' : '',
+  });
 }
 
-async function handleCalculate() {
+function calculateSellSwap() {
+  const teslaSharesToSell = parseFloat($('teslaToSellInput').value);
+
+  if (!Number.isFinite(teslaSharesToSell) || teslaSharesToSell <= 0) {
+    $('sellResults').hidden = true;
+    alert('Enter a positive number of Tesla shares to sell.');
+    return;
+  }
+
+  if (!state.tesla || !state.spacex) {
+    alert('Stock prices are not loaded yet. Please wait or click Refresh.');
+    return;
+  }
+
+  const { owned } = getPortfolioValues();
+  const teslaPrice = state.tesla.price;
+  const spacexPrice = state.spacex.price;
+  const proceeds = teslaSharesToSell * teslaPrice;
+  const spacexToBuy = proceeds / spacexPrice;
+
+  const teslaSharesAfter = owned.tesla - teslaSharesToSell;
+  const spacexSharesAfter = owned.spacex + spacexToBuy;
+  const insufficient = teslaSharesAfter < 0;
+
+  $('spacexToBuyResult').textContent = formatShares(spacexToBuy);
+  $('sellResultDetails').innerHTML = `
+    <strong>At current prices</strong> (${formatTime(state.tesla.updatedAt)}):<br>
+    ${formatShares(teslaSharesToSell)} Tesla shares × ${formatCurrency(teslaPrice)} =
+    <strong>${formatCurrency(proceeds)}</strong> sale proceeds.<br>
+    ${formatCurrency(proceeds)} ÷ ${formatCurrency(spacexPrice)} per SpaceX share =
+    <strong>${formatShares(spacexToBuy)} SpaceX shares to buy</strong>.
+  `;
+  $('sellResults').hidden = false;
+  $('buyResults').hidden = true;
+
+  renderPortfolioImpact({
+    teslaSharesAfter,
+    spacexSharesAfter,
+    scenarioLabel: `Selling ${formatShares(teslaSharesToSell)} Tesla shares`,
+    warning: insufficient ? 'You do not own enough Tesla shares to sell this amount.' : '',
+  });
+}
+
+async function handleCalculateBuy() {
   const data = await fetchQuotes({ showLoading: true });
   if (data) {
-    calculateSwap();
+    calculateBuySwap();
+  }
+}
+
+async function handleCalculateSell() {
+  const data = await fetchQuotes({ showLoading: true });
+  if (data) {
+    calculateSellSwap();
+  }
+}
+
+function bindClick(id, handler) {
+  const el = $(id);
+  if (el) el.addEventListener('click', handler);
+}
+
+function bindInput(id, handler) {
+  const el = $(id);
+  if (el) el.addEventListener('input', handler);
+}
+
+function bindKeydown(id, handler) {
+  const el = $(id);
+  if (el) {
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handler();
+    });
   }
 }
 
 function bindEvents() {
-  $('refreshBtn').addEventListener('click', () => fetchQuotes({ showLoading: true }));
+  bindClick('refreshBtn', () => fetchQuotes({ showLoading: true }));
 
-  $('interval').addEventListener('change', () => {
-    const seconds = getIntervalSeconds();
-    $('interval').value = String(seconds);
-    restartAutoRefresh();
-    setStatus(`Auto-refresh interval set to ${seconds}s`, 'live');
-  });
+  const intervalEl = $('interval');
+  if (intervalEl) {
+    intervalEl.addEventListener('change', () => {
+      const seconds = getIntervalSeconds();
+      intervalEl.value = String(seconds);
+      restartAutoRefresh();
+      setStatus(`Auto-refresh interval set to ${seconds}s`, 'live');
+    });
+  }
 
-  $('calculateBtn').addEventListener('click', handleCalculate);
-
-  $('spacexToBuy').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') handleCalculate();
-  });
+  bindClick('calculateBtn', handleCalculateBuy);
+  bindClick('calculateSellBtn', handleCalculateSell);
+  bindInput('teslaShares', updateHoldingsSummary);
+  bindInput('spacexShares', updateHoldingsSummary);
+  bindKeydown('spacexToBuy', handleCalculateBuy);
+  bindKeydown('teslaToSellInput', handleCalculateSell);
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  initCharts();
-  bindEvents();
-  await fetchQuotes({ showLoading: true });
-  restartAutoRefresh();
+  try {
+    initCharts();
+    bindEvents();
+    await fetchQuotes({ showLoading: true });
+    restartAutoRefresh();
+  } catch (error) {
+    console.error(error);
+    setStatus(`Error: ${error.message}`, 'error');
+  }
 });
