@@ -160,6 +160,46 @@ input[type="number"]:focus {
   margin-bottom: 0;
 }
 
+.holding-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.holding-value.tesla-value {
+  color: var(--tesla);
+}
+
+.holding-value.spacex-value {
+  color: var(--spacex);
+}
+
+.portfolio-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.portfolio-total-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.portfolio-total-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -260,6 +300,74 @@ input[type="number"]:focus {
 
 .calculator-panel {
   border-top: 3px solid var(--accent);
+}
+
+.sell-panel {
+  border-top-color: var(--tesla);
+}
+
+.impact-panel {
+  border-top: 3px solid var(--spacex);
+}
+
+.impact-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.impact-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.impact-table th,
+.impact-table td {
+  padding: 0.65rem 0.85rem;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+}
+
+.impact-table th:first-child,
+.impact-table td:first-child {
+  text-align: left;
+}
+
+.impact-table thead th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.impact-table tbody tr:last-child td {
+  border-bottom: none;
+  font-weight: 700;
+  padding-top: 0.85rem;
+}
+
+.impact-table .tesla-row td:first-child {
+  color: var(--tesla);
+}
+
+.impact-table .spacex-row td:first-child {
+  color: var(--spacex);
+}
+
+.impact-table .total-row td {
+  color: var(--accent);
+}
+
+.impact-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.impact-warning {
+  color: var(--danger);
+  font-weight: 600;
 }
 
 .results {
