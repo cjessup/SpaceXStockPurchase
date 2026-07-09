@@ -279,8 +279,11 @@ function parseChartResponse(symbol, data) {
 
 async function fetchChart(symbol) {
   const yahooUrl = `${YAHOO_CHART_URL}/${symbol}?interval=5m&range=1d`;
+  // GitHub Pages has no /api/quotes proxy. Yahoo blocks browser CORS, so try
+  // direct first (works only if CORS ever opens), then public CORS proxies.
   const sources = [
     yahooUrl,
+    `https://proxy.cors.sh/${yahooUrl}`,
     `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
   ];
 
@@ -288,7 +291,11 @@ async function fetchChart(symbol) {
 
   for (const url of sources) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: {
+          'x-requested-with': 'XMLHttpRequest',
+        },
+      });
       if (!response.ok) {
         throw new Error(`Yahoo Finance returned ${response.status} for ${symbol}`);
       }
