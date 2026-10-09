@@ -1,14 +1,12 @@
 const express = require('express');
 const path = require('path');
+const { chartUrl, parseChartPayload } = require('./docs/quotes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const YAHOO_CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
-
 async function fetchChart(symbol) {
-  const url = `${YAHOO_CHART_URL}/${symbol}?interval=5m&range=1d`;
-  const response = await fetch(url, {
+  const response = await fetch(chartUrl(symbol), {
     headers: {
       'User-Agent': 'Mozilla/5.0 (compatible; SpaceXStockPurchase/1.0)',
     },
@@ -19,34 +17,7 @@ async function fetchChart(symbol) {
   }
 
   const data = await response.json();
-  const result = data?.chart?.result?.[0];
-
-  if (!result) {
-    throw new Error(`No chart data returned for ${symbol}`);
-  }
-
-  const meta = result.meta;
-  const timestamps = result.timestamp || [];
-  const closes = result.indicators?.quote?.[0]?.close || [];
-
-  const history = timestamps
-    .map((ts, i) => ({
-      time: ts * 1000,
-      price: closes[i],
-    }))
-    .filter((point) => point.price != null);
-
-  return {
-    symbol,
-    name: meta.longName || meta.shortName || symbol,
-    price: meta.regularMarketPrice,
-    currency: meta.currency || 'USD',
-    previousClose: meta.chartPreviousClose ?? meta.previousClose,
-    dayHigh: meta.regularMarketDayHigh,
-    dayLow: meta.regularMarketDayLow,
-    history,
-    updatedAt: new Date().toISOString(),
-  };
+  return parseChartPayload(symbol, data);
 }
 
 const staticDir = path.join(__dirname, 'docs');

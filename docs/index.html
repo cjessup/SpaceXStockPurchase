@@ -58,7 +58,10 @@
               <h3>Tesla</h3>
               <span class="ticker">TSLA</span>
             </div>
-            <div class="quote-price" id="teslaPrice">—</div>
+            <div class="quote-price-block">
+              <div class="quote-price" id="teslaPrice">—</div>
+              <div class="quote-session" id="teslaSession" hidden></div>
+            </div>
           </div>
           <div class="quote-meta" id="teslaMeta"></div>
           <div class="chart-wrap">
@@ -72,7 +75,10 @@
               <h3>SpaceX</h3>
               <span class="ticker">SPCX</span>
             </div>
-            <div class="quote-price" id="spacexPrice">—</div>
+            <div class="quote-price-block">
+              <div class="quote-price" id="spacexPrice">—</div>
+              <div class="quote-session" id="spacexSession" hidden></div>
+            </div>
           </div>
           <div class="quote-meta" id="spacexMeta"></div>
           <div class="chart-wrap">
@@ -129,10 +135,11 @@
     </main>
 
     <footer class="footer">
-      <p>Prices via Yahoo Finance (TSLA, SPCX). For informational purposes only — not financial advice.</p>
+      <p>Prices via Yahoo Finance (TSLA, SPCX), including pre-market and after-hours prints when that session is open. For informational purposes only — not financial advice.</p>
     </footer>
   </div>
 
+  <script src="quotes.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

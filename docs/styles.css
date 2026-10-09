@@ -273,10 +273,20 @@ input[type="number"]:focus {
   font-weight: 500;
 }
 
+.quote-price-block {
+  text-align: right;
+}
+
 .quote-price {
   font-size: 1.75rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+.quote-session {
+  font-size: 0.75rem;
+  color: var(--accent);
+  min-height: 1.1em;
 }
 
 .tesla-card .quote-price {

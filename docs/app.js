@@ -117,17 +117,104 @@ function updateChart(chart, history) {
   chart.update('none');
 }
 
+function sessionLabel(quote) {
+  if (quote.marketState === 'pre') return 'Pre-market';
+  if (quote.marketState === 'post') return 'After hours';
+  if (quote.marketState === 'closed' && quote.priceSession === 'post') return 'Last after-hours';
+  if (quote.marketState === 'closed' && quote.priceSession === 'pre') return 'Last pre-market';
+  if (quote.marketState === 'closed') return 'Market closed';
+  return '';
+}
+
+function statusSession(quote) {
+  if (quote?.marketState === 'pre') return 'pre-market';
+  if (quote?.marketState === 'post') return 'after hours';
+  if (quote?.marketState === 'closed' && (quote.priceSession === 'post' || quote.priceSession === 'pre')) {
+    return 'market closed · extended-hours price';
+  }
+  if (quote?.marketState === 'closed') return 'market closed';
+  return 'market open';
+}
+
+function extendedSessionNote(quote) {
+  const label = sessionLabel(quote);
+  if (!label || label === 'Market closed') return '';
+
+  const regular = quote.regularMarketPrice;
+  const sameAsPrior =
+    Number.isFinite(regular) &&
+    Number.isFinite(quote.previousClose) &&
+    Math.abs(regular - quote.previousClose) < 0.005;
+  if (!Number.isFinite(regular) || regular <= 0 || !Number.isFinite(quote.price) || sameAsPrior) {
+    return `${label} · `;
+  }
+
+  const delta = quote.price - regular;
+  const pct = (delta / regular) * 100;
+  const sign = delta >= 0 ? '+' : '';
+  return `${label} ${sign}${delta.toFixed(2)} (${sign}${pct.toFixed(2)}%) vs regular close · `;
+}
+
 function updateQuoteCard(prefix, quote) {
   const change = quote.price - quote.previousClose;
   const changePct = (change / quote.previousClose) * 100;
   const sign = change >= 0 ? '+' : '';
+  const label = sessionLabel(quote);
+  const sessionEl = $(`${prefix}Session`);
+  const stamp = quote.marketState && quote.marketState !== 'regular'
+    ? `Price as of ${formatTime(quote.pricedAt || quote.updatedAt)}`
+    : `Updated ${formatTime(quote.updatedAt)}`;
 
   $(`${prefix}Price`).textContent = formatCurrency(quote.price);
+  if (sessionEl) {
+    sessionEl.textContent = label;
+    sessionEl.hidden = label === '';
+  }
   $(`${prefix}Meta`).innerHTML = `
-    Day range: ${formatCurrency(quote.dayLow)} – ${formatCurrency(quote.dayHigh)} ·
+    ${extendedSessionNote(quote)}Range: ${formatCurrency(quote.dayLow)} – ${formatCurrency(quote.dayHigh)} ·
     ${sign}${change.toFixed(2)} (${sign}${changePct.toFixed(2)}%) vs prior close ·
-    Updated ${formatTime(quote.updatedAt)}
+    ${stamp}
   `;
+}
+
+const HOLDINGS_KEY = 'spacex-stock-holdings';
+
+function shareCount(value) {
+  const parsed = typeof value === 'number' ? value : parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+function restoreHoldings() {
+  let stored = null;
+  try {
+    stored = JSON.parse(localStorage.getItem(HOLDINGS_KEY) || 'null');
+  } catch {
+    stored = null;
+  }
+  if (!stored || typeof stored !== 'object') return;
+
+  const tesla = shareCount(stored.tesla);
+  const spacex = shareCount(stored.spacex);
+  if (tesla != null) $('teslaShares').value = String(tesla);
+  if (spacex != null) $('spacexShares').value = String(spacex);
+}
+
+function saveHoldings() {
+  const payload = {
+    tesla: shareCount($('teslaShares').value) ?? 0,
+    spacex: shareCount($('spacexShares').value) ?? 0,
+  };
+  try {
+    localStorage.setItem(HOLDINGS_KEY, JSON.stringify(payload));
+  } catch {
+    // Storage can be blocked in private browsing. The page still works for this visit.
+  }
+}
+
+function onHoldingsInput() {
+  saveHoldings();
+  updateHoldingsSummary();
 }
 
 function getOwnedShares() {
@@ -241,71 +328,47 @@ function renderQuotes(data) {
   updateHoldingsSummary();
 }
 
-const YAHOO_CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const isLocalServer =
   location.protocol !== 'file:' &&
   (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
-function parseChartResponse(symbol, data) {
-  const result = data?.chart?.result?.[0];
-
-  if (!result) {
-    throw new Error(`No chart data returned for ${symbol}`);
+async function readQuotePayload(response) {
+  const data = await response.json();
+  if (data && typeof data.contents === 'string' && data.contents.trim()) {
+    return JSON.parse(data.contents);
   }
-
-  const meta = result.meta;
-  const timestamps = result.timestamp || [];
-  const closes = result.indicators?.quote?.[0]?.close || [];
-
-  const history = timestamps
-    .map((ts, i) => ({
-      time: ts * 1000,
-      price: closes[i],
-    }))
-    .filter((point) => point.price != null);
-
-  return {
-    symbol,
-    name: meta.longName || meta.shortName || symbol,
-    price: meta.regularMarketPrice,
-    currency: meta.currency || 'USD',
-    previousClose: meta.chartPreviousClose ?? meta.previousClose,
-    dayHigh: meta.regularMarketDayHigh,
-    dayLow: meta.regularMarketDayLow,
-    history,
-    updatedAt: new Date().toISOString(),
-  };
+  return data;
 }
 
 async function fetchChart(symbol) {
-  const yahooUrl = `${YAHOO_CHART_URL}/${symbol}?interval=5m&range=1d`;
+  if (typeof QuoteFeed === 'undefined') {
+    throw new Error('Quote parser failed to load. Refresh the page.');
+  }
+
+  const yahooUrl = QuoteFeed.chartUrl(symbol);
   // GitHub Pages has no /api/quotes proxy. Yahoo blocks browser CORS, so try
-  // direct first (works only if CORS ever opens), then public CORS proxies.
+  // direct first, then a public proxy that returns the chart JSON.
   const sources = [
     yahooUrl,
-    `https://proxy.cors.sh/${yahooUrl}`,
     `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`,
   ];
 
   let lastError = null;
 
   for (const url of sources) {
     try {
-      const response = await fetch(url, {
-        headers: {
-          'x-requested-with': 'XMLHttpRequest',
-        },
-      });
+      const response = await fetch(url, { signal: AbortSignal.timeout(12000) });
       if (!response.ok) {
         throw new Error(`Yahoo Finance returned ${response.status} for ${symbol}`);
       }
 
-      const data = await response.json();
+      const data = await readQuotePayload(response);
       if (data?.error) {
         throw new Error(data.error);
       }
 
-      return parseChartResponse(symbol, data);
+      return QuoteFeed.parseChartPayload(symbol, data);
     } catch (error) {
       lastError = error;
     }
@@ -355,7 +418,7 @@ async function fetchQuotes({ showLoading = true } = {}) {
 
     const interval = parseInt($('interval').value, 10) || 30;
     setStatus(
-      `Live · last updated ${formatTime(data.tesla.updatedAt)} · auto-refresh every ${interval}s`,
+      `Live · ${statusSession(data.tesla)} · last updated ${formatTime(data.tesla.updatedAt)} · auto-refresh every ${interval}s`,
       'live'
     );
 
@@ -522,8 +585,8 @@ function bindEvents() {
 
   bindClick('calculateBtn', handleCalculateBuy);
   bindClick('calculateSellBtn', handleCalculateSell);
-  bindInput('teslaShares', updateHoldingsSummary);
-  bindInput('spacexShares', updateHoldingsSummary);
+  bindInput('teslaShares', onHoldingsInput);
+  bindInput('spacexShares', onHoldingsInput);
   bindKeydown('spacexToBuy', handleCalculateBuy);
   bindKeydown('teslaToSellInput', handleCalculateSell);
 }
@@ -531,7 +594,9 @@ function bindEvents() {
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     initCharts();
+    restoreHoldings();
     bindEvents();
+    updateHoldingsSummary();
     await fetchQuotes({ showLoading: true });
     restartAutoRefresh();
   } catch (error) {
