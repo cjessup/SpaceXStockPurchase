@@ -241,77 +241,9 @@ function renderQuotes(data) {
   updateHoldingsSummary();
 }
 
-const YAHOO_CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const isLocalServer =
   location.protocol !== 'file:' &&
   (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
-
-function parseChartResponse(symbol, data) {
-  const result = data?.chart?.result?.[0];
-
-  if (!result) {
-    throw new Error(`No chart data returned for ${symbol}`);
-  }
-
-  const meta = result.meta;
-  const timestamps = result.timestamp || [];
-  const closes = result.indicators?.quote?.[0]?.close || [];
-
-  const history = timestamps
-    .map((ts, i) => ({
-      time: ts * 1000,
-      price: closes[i],
-    }))
-    .filter((point) => point.price != null);
-
-  return {
-    symbol,
-    name: meta.longName || meta.shortName || symbol,
-    price: meta.regularMarketPrice,
-    currency: meta.currency || 'USD',
-    previousClose: meta.chartPreviousClose ?? meta.previousClose,
-    dayHigh: meta.regularMarketDayHigh,
-    dayLow: meta.regularMarketDayLow,
-    history,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-async function fetchChart(symbol) {
-  const yahooUrl = `${YAHOO_CHART_URL}/${symbol}?interval=5m&range=1d`;
-  const sources = [
-    yahooUrl,
-    `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
-  ];
-
-  let lastError = null;
-
-  for (const url of sources) {
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Yahoo Finance returned ${response.status} for ${symbol}`);
-      }
-
-      const data = await response.json();
-      if (data?.error) {
-        throw new Error(data.error);
-      }
-
-      return parseChartResponse(symbol, data);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  if (location.protocol === 'file:') {
-    throw new Error(
-      'Cannot load prices from a local file. Run "npm start" and open http://localhost:3000'
-    );
-  }
-
-  throw lastError || new Error(`Failed to load prices for ${symbol}`);
-}
 
 async function loadQuotes() {
   if (isLocalServer) {
@@ -321,15 +253,21 @@ async function loadQuotes() {
         return response.json();
       }
     } catch {
-      // Fall back to direct/proxy fetch below.
+      // Fall back to the public quote feed below.
     }
   }
 
-  const [tesla, spacex] = await Promise.all([
-    fetchChart('TSLA'),
-    fetchChart('SPCX'),
-  ]);
-  return { tesla, spacex };
+  if (location.protocol === 'file:') {
+    throw new Error(
+      'Cannot load prices from a local file. Run "npm start" and open http://localhost:3000'
+    );
+  }
+
+  if (typeof QuoteFeed === 'undefined') {
+    throw new Error('Quote feed failed to load. Refresh the page.');
+  }
+
+  return QuoteFeed.loadQuotes();
 }
 
 async function fetchQuotes({ showLoading = true } = {}) {
