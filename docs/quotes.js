@@ -1,6 +1,6 @@
-// Public Yahoo chart feed. The v7 quote endpoint now returns 401 without a crumb.
-// includePrePost adds pre-market and after-hours bars. The headline price is the
-// newest of the regular, pre-market, and after-hours prints.
+// CNBC's public quote and chart feeds send Access-Control-Allow-Origin: *.
+// Yahoo's chart feed does not, and the public CORS proxies in front of it
+// are no longer reachable, so the page reads prices from CNBC instead.
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) {
@@ -9,129 +9,200 @@
     root.QuoteFeed = api;
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const YAHOO_CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
+  const QUOTE_URL =
+    'https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol';
+  const CHART_URL = 'https://ts-api.cnbc.com/harmony/app/charts/1D.json';
+
+  function quoteUrl(symbols) {
+    const params = new URLSearchParams({
+      symbols: symbols.join('|'),
+      requestMethod: 'quick',
+      exthrs: '1',
+      noform: '1',
+      partnerId: '2',
+      fund: '1',
+      output: 'json',
+    });
+    return `${QUOTE_URL}?${params}`;
+  }
 
   function chartUrl(symbol) {
-    const params = new URLSearchParams({
-      interval: '5m',
-      range: '1d',
-      includePrePost: 'true',
-    });
-    return `${YAHOO_CHART_URL}/${encodeURIComponent(symbol)}?${params}`;
+    return `${CHART_URL}?symbol=${encodeURIComponent(symbol)}`;
   }
 
-  function finitePrice(value) {
-    return typeof value === 'number' && Number.isFinite(value) && value > 0;
+  function num(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value !== 'string' || !value.trim()) return null;
+    const parsed = Number(value.replace(/[$,]/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
-  function sessionContaining(meta, unixSeconds) {
-    const periods = meta.currentTradingPeriod || {};
-    for (const name of ['pre', 'regular', 'post']) {
-      const period = periods[name];
-      if (
-        period &&
-        Number.isFinite(period.start) &&
-        Number.isFinite(period.end) &&
-        unixSeconds >= period.start &&
-        unixSeconds < period.end
-      ) {
-        return name;
-      }
+  function positive(value) {
+    const parsed = num(value);
+    return parsed != null && parsed > 0 ? parsed : null;
+  }
+
+  function etDateKey(ms) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(ms);
+  }
+
+  function selectPrint(quote) {
+    const regular = positive(quote.last);
+    const extended = quote.ExtendedMktQuote;
+    const extendedPrice = positive(extended?.last);
+    const status = quote.curmktstatus;
+    const extendedAt = Date.parse(extended?.last_time);
+    const regularAt = Date.parse(quote.last_time);
+    const extendedIsNewer =
+      Boolean(extendedPrice) &&
+      Number.isFinite(extendedAt) &&
+      Number.isFinite(regularAt) &&
+      extendedAt > regularAt;
+
+    let marketState = 'closed';
+    if (status === 'REG_MKT') marketState = 'regular';
+    else if (status === 'PRE_MKT') marketState = 'pre';
+    else if (status === 'POST_MKT') marketState = 'post';
+
+    const useExtended =
+      (marketState === 'pre' || marketState === 'post') && Boolean(extendedPrice)
+        ? true
+        : marketState !== 'regular' && extendedIsNewer;
+
+    let priceSession = 'regular';
+    if (useExtended) {
+      if (marketState === 'pre' || marketState === 'post') priceSession = marketState;
+      else if (extended?.type === 'PRE_MKT') priceSession = 'pre';
+      else priceSession = 'post';
     }
+
+    const pricedMs = useExtended ? extendedAt : regularAt;
+
+    return {
+      price: useExtended ? extendedPrice : regular || extendedPrice,
+      marketState,
+      priceSession,
+      regularMarketPrice: regular || (useExtended ? extendedPrice : null),
+      pricedAt: Number.isFinite(pricedMs) ? new Date(pricedMs).toISOString() : new Date().toISOString(),
+    };
+  }
+
+  function previousClose(quote) {
+    const direct = positive(quote.previous_day_closing);
+    if (direct) return direct;
+
+    const last = positive(quote.last);
+    const change = num(quote.change);
+    if (last && change != null) {
+      const derived = last - change;
+      if (derived > 0) return derived;
+    }
+
     return null;
   }
 
-  function marketStateAt(meta, nowSeconds) {
-    return sessionContaining(meta, nowSeconds) || 'closed';
-  }
-
-  function labelBar(meta, unixSeconds) {
-    const located = sessionContaining(meta, unixSeconds);
-    if (located) return located;
-    if (Number.isFinite(meta.regularMarketTime) && unixSeconds > meta.regularMarketTime) {
-      return 'post';
-    }
-    return 'regular';
-  }
-
-  function selectLivePrint(meta, history) {
-    const candidates = [];
-    const add = (session, price, time) => {
-      if (!finitePrice(price) || !Number.isFinite(time)) return;
-      candidates.push({ session, price, time });
-    };
-
-    add('post', meta.postMarketPrice, meta.postMarketTime);
-    add('pre', meta.preMarketPrice, meta.preMarketTime);
-    add('regular', meta.regularMarketPrice, meta.regularMarketTime);
-
-    if (history.length) {
-      const last = history[history.length - 1];
-      const time = Math.floor(last.time / 1000);
-      add(labelBar(meta, time), last.price, time);
-    }
-
-    candidates.sort((a, b) => b.time - a.time);
-    return candidates[0] || null;
-  }
-
-  function dayRange(history, livePrice, regularHigh, regularLow) {
-    const prices = [];
-    for (const point of history) {
-      if (finitePrice(point.price)) prices.push(point.price);
-    }
-    if (finitePrice(livePrice)) prices.push(livePrice);
-    if (finitePrice(regularHigh)) prices.push(regularHigh);
-    if (finitePrice(regularLow)) prices.push(regularLow);
-    if (!prices.length) return { dayHigh: null, dayLow: null };
-    return { dayHigh: Math.max(...prices), dayLow: Math.min(...prices) };
-  }
-
-  function parseChartPayload(symbol, data, nowSeconds = Date.now() / 1000) {
-    const result = data?.chart?.result?.[0];
-    if (!result) {
-      const description = data?.chart?.error?.description;
-      throw new Error(description || `No chart data returned for ${symbol}`);
-    }
-
-    const meta = result.meta || {};
-    const timestamps = result.timestamp || [];
-    const closes = result.indicators?.quote?.[0]?.close || [];
-    const history = timestamps
-      .map((ts, i) => ({
-        time: ts * 1000,
-        price: closes[i],
+  function sessionHistory(bars) {
+    const points = (bars || [])
+      .map((bar) => ({
+        time: bar.tradeTimeinMills,
+        price: positive(bar.close),
       }))
-      .filter((point) => finitePrice(point.price));
+      .filter((point) => point.price && Number.isFinite(point.time))
+      .sort((a, b) => a.time - b.time);
 
-    const live = selectLivePrint(meta, history);
-    if (!live) {
+    if (!points.length) return [];
+
+    const day = etDateKey(points[points.length - 1].time);
+    return points.filter((point) => etDateKey(point.time) === day);
+  }
+
+  function parseQuote(quote, chart) {
+    const symbol = quote?.symbol;
+    if (!symbol) {
+      throw new Error('Quote service returned an empty quote');
+    }
+    if (quote.code != null && Number(quote.code) !== 0) {
+      throw new Error(`No quote returned for ${symbol}`);
+    }
+
+    const print = selectPrint(quote);
+    const price = print.price;
+    const priorClose = previousClose(quote);
+    if (!price || !priorClose) {
       throw new Error(`No price returned for ${symbol}`);
     }
 
-    const range = dayRange(
-      history,
-      live.price,
-      meta.regularMarketDayHigh,
-      meta.regularMarketDayLow
-    );
+    const history = sessionHistory(chart?.barData?.priceBars);
+    const rangePrices = history.map((point) => point.price);
+    const high = positive(quote.high);
+    const low = positive(quote.low);
+    if (high) rangePrices.push(high);
+    if (low) rangePrices.push(low);
+    rangePrices.push(price);
 
     return {
       symbol,
-      name: meta.longName || meta.shortName || symbol,
-      price: live.price,
-      pricedAt: new Date(live.time * 1000).toISOString(),
-      priceSession: live.session,
-      marketState: marketStateAt(meta, nowSeconds),
-      regularMarketPrice: finitePrice(meta.regularMarketPrice) ? meta.regularMarketPrice : live.price,
-      currency: meta.currency || 'USD',
-      previousClose: meta.previousClose ?? meta.chartPreviousClose,
-      dayHigh: range.dayHigh,
-      dayLow: range.dayLow,
+      name: quote.name || quote.shortName || symbol,
+      price,
+      pricedAt: print.pricedAt,
+      priceSession: print.priceSession,
+      marketState: print.marketState,
+      regularMarketPrice: print.regularMarketPrice || price,
+      currency: quote.currencyCode || 'USD',
+      previousClose: priorClose,
+      dayHigh: Math.max(...rangePrices),
+      dayLow: Math.min(...rangePrices),
       history,
       updatedAt: new Date().toISOString(),
     };
   }
 
-  return { chartUrl, parseChartPayload, selectLivePrint, marketStateAt };
+  async function fetchJson(url, headers, label) {
+    let response;
+    try {
+      response = await fetch(url, {
+        headers,
+        signal: AbortSignal.timeout(12000),
+      });
+    } catch (error) {
+      const reason = error?.name === 'TimeoutError' ? 'timed out' : 'failed';
+      throw new Error(`${label} request ${reason}`);
+    }
+
+    if (!response.ok) {
+      throw new Error(`${label} returned ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async function loadQuotes(options = {}) {
+    const headers = options.headers || { Accept: 'application/json' };
+    const [payload, teslaChart, spacexChart] = await Promise.all([
+      fetchJson(quoteUrl(['TSLA', 'SPCX']), headers, 'Quote'),
+      fetchJson(chartUrl('TSLA'), headers, 'TSLA chart').catch(() => null),
+      fetchJson(chartUrl('SPCX'), headers, 'SPCX chart').catch(() => null),
+    ]);
+
+    const quotes = payload?.FormattedQuoteResult?.FormattedQuote || [];
+    const bySymbol = new Map(quotes.map((quote) => [quote.symbol, quote]));
+    const tesla = bySymbol.get('TSLA');
+    const spacex = bySymbol.get('SPCX');
+
+    if (!tesla || !spacex) {
+      throw new Error('Quote service did not return TSLA and SPCX');
+    }
+
+    return {
+      tesla: parseQuote(tesla, teslaChart),
+      spacex: parseQuote(spacex, spacexChart),
+    };
+  }
+
+  return { loadQuotes, parseQuote, quoteUrl, chartUrl };
 });

@@ -1,24 +1,14 @@
 const express = require('express');
 const path = require('path');
-const { chartUrl, parseChartPayload } = require('./docs/quotes');
+const { loadQuotes } = require('./docs/quotes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-async function fetchChart(symbol) {
-  const response = await fetch(chartUrl(symbol), {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; SpaceXStockPurchase/1.0)',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Yahoo Finance returned ${response.status} for ${symbol}`);
-  }
-
-  const data = await response.json();
-  return parseChartPayload(symbol, data);
-}
+const QUOTE_HEADERS = {
+  Accept: 'application/json',
+  'User-Agent': 'Mozilla/5.0 (compatible; SpaceXStockPurchase/1.0)',
+};
 
 const staticDir = path.join(__dirname, 'docs');
 
@@ -35,12 +25,7 @@ app.get('/.well-known/appspecific/com.chrome.devtools.json', (_req, res) => {
 
 app.get('/api/quotes', async (_req, res) => {
   try {
-    const [tesla, spacex] = await Promise.all([
-      fetchChart('TSLA'),
-      fetchChart('SPCX'),
-    ]);
-
-    res.json({ tesla, spacex });
+    res.json(await loadQuotes({ headers: QUOTE_HEADERS }));
   } catch (error) {
     console.error('Quote fetch failed:', error.message);
     res.status(502).json({ error: error.message });

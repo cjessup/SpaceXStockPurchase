@@ -332,45 +332,15 @@ const isLocalServer =
   location.protocol !== 'file:' &&
   (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
-async function readQuotePayload(response) {
-  const data = await response.json();
-  if (data && typeof data.contents === 'string' && data.contents.trim()) {
-    return JSON.parse(data.contents);
-  }
-  return data;
-}
-
-async function fetchChart(symbol) {
-  if (typeof QuoteFeed === 'undefined') {
-    throw new Error('Quote parser failed to load. Refresh the page.');
-  }
-
-  const yahooUrl = QuoteFeed.chartUrl(symbol);
-  // GitHub Pages has no /api/quotes proxy. Yahoo blocks browser CORS, so try
-  // direct first, then a public proxy that returns the chart JSON.
-  const sources = [
-    yahooUrl,
-    `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
-    `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`,
-  ];
-
-  let lastError = null;
-
-  for (const url of sources) {
+async function loadQuotes() {
+  if (isLocalServer) {
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(12000) });
-      if (!response.ok) {
-        throw new Error(`Yahoo Finance returned ${response.status} for ${symbol}`);
+      const response = await fetch('/api/quotes');
+      if (response.ok) {
+        return response.json();
       }
-
-      const data = await readQuotePayload(response);
-      if (data?.error) {
-        throw new Error(data.error);
-      }
-
-      return QuoteFeed.parseChartPayload(symbol, data);
-    } catch (error) {
-      lastError = error;
+    } catch {
+      // Fall back to the public quote feed below.
     }
   }
 
@@ -380,26 +350,11 @@ async function fetchChart(symbol) {
     );
   }
 
-  throw lastError || new Error(`Failed to load prices for ${symbol}`);
-}
-
-async function loadQuotes() {
-  if (isLocalServer) {
-    try {
-      const response = await fetch('/api/quotes');
-      if (response.ok) {
-        return response.json();
-      }
-    } catch {
-      // Fall back to direct/proxy fetch below.
-    }
+  if (typeof QuoteFeed === 'undefined') {
+    throw new Error('Quote feed failed to load. Refresh the page.');
   }
 
-  const [tesla, spacex] = await Promise.all([
-    fetchChart('TSLA'),
-    fetchChart('SPCX'),
-  ]);
-  return { tesla, spacex };
+  return QuoteFeed.loadQuotes();
 }
 
 async function fetchQuotes({ showLoading = true } = {}) {
